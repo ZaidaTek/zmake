@@ -1,0 +1,141 @@
+#!/usr/bin/python3
+
+ ### Copyright (C) 2025 ZaidaTek and Andreas Riebesehl
+#### This work is licensed under: Creative Commons Attribution-NoDerivatives 4.0 International Public License
+#### For full license text, please visit: https://creativecommons.org/licenses/by-nd/4.0/legalcode
+###
+
+ ### !!! NOTE (2025-08-17) !!!
+#### !!! THIS IS EXPERIMENTAL SOFTWARE, ABSOLUTELY NO WARRANTIES OR GUARANTEES ARE PROVIDED WHATSOEVER IN ANY FORM !!!
+#### !!! ITS EXECUTION INCLUDES POSSIBLY USING e.g. "rm CALCULATED_FILEPATH" FOR CLEANING OBJECTS FILES, YOU HAVE BEEN WARNED !!!
+###
+
+import sys, os, subprocess, getopt, json
+
+dfMake = {
+    "flag": {
+        # "shared": ["-O1"],
+        # "compiler": ["-Wfatal-errors", "-Wall", "-Wextra"],
+        "shared": ["-flto", "-O3"],
+        "compiler": ["-Wfatal-errors", "-Wall", "-Wextra", "-fexpensive-optimizations"],
+        "linker": ["-s"],
+        "extra": []
+    }
+}
+gApp = {
+    "const": {
+        "type_c": [".c"],
+        "type_cpp": [".cpp"],
+        "arg_short": "fnyxc",
+        "arg_long": [],
+        "gcc": ["gcc"],
+        "gpp": ["g++"]
+    },
+    "set": {
+        "dry": True,
+        "force": False,
+        "exec": False,
+        "clean": False
+    },
+    "cache": {
+        "objects": [],
+        "commands": []
+    }
+}
+def ZMK_ScanSources(iPath):
+    lSources = []
+    for lPathRoot, lPathDirs, lPathFiles in os.walk(iPath):
+        for lFile in lPathFiles:        
+            if os.path.splitext(lFile)[1] in (gApp["const"]["type_c"] + gApp["const"]["type_cpp"]):
+                lSources.append(os.path.join(lPathRoot, lFile))
+    return lSources
+def ZMK_ReadMake(iPath):
+    try:
+        with open(iPath, "r", encoding = "utf-8") as lFile:
+            lData = json.load(lFile)
+    except:
+        print(f"error: opening {iPath}")
+        exit()
+    return lData
+def ZMK_Main(iArgs):
+    ## INIT
+    def lfnc_PathCanon(iiPath):
+        return os.path.expanduser(os.path.normpath(iiPath))
+    def lfnc_PathMake(iiPath, iiRoot):
+        return lfnc_PathCanon(iiPath if os.path.isabs(iiPath) else os.path.join(iiRoot, iiPath))
+    ## GETOPTS
+    try:
+        lArgUser = getopt.gnu_getopt(iArgs[1:], gApp["const"]["arg_short"], longopts=gApp["const"]["arg_long"])
+    except getopt.GetoptError as lError:
+        print(lError)
+        exit()
+    for lKey, lValue in lArgUser[0]:
+        if lKey == "-n":
+            gApp["set"]["dry"] = True
+        elif lKey == "-y":
+            gApp["set"]["dry"] = False
+        elif lKey == "-f":
+            gApp["set"]["force"] = True # TODO implement me!
+        elif lKey == "-x":
+            gApp["set"]["exec"] = True
+        elif lKey == "-c":
+            gApp["set"]["clean"] = True
+    ## PARSE
+    for lPathMake, lMake in ([((x, {} if os.path.isdir(x) else ZMK_ReadMake(x))) for x in lArgUser[1]] if lArgUser[1] else [((iArgs[0], {}))]):
+        lPathRoot = lfnc_PathCanon(lPathMake if os.path.isdir(lPathMake) else os.path.dirname(lPathMake))
+        lBaseTarget = lfnc_PathCanon(lMake.get("target", os.path.splitext(os.path.basename(lPathRoot))[0]))
+        lPathTarget = lfnc_PathMake(lBaseTarget, lPathRoot)
+        if "sources" in lMake:
+            if isinstance(lMake["sources"], list):
+                lCache = [lfnc_PathMake(x, lPathRoot) for x in lMake["sources"]]
+                lMake["sources"] = {}
+                for x in lCache:
+                    lMake["sources"][x] = {}
+            elif isinstance(lMake["sources"], dict):
+                for x in [x for x in lMake["sources"].keys()]:
+                    lMake["sources"][lfnc_PathMake(x, lPathRoot)] = lMake["sources"].pop(x)
+        else:
+            for x in ZMK_ScanSources(lPathRoot):
+                lMake.setdefault("sources", {})[x] = {}
+        if "include" in lMake:
+            lMake["include"] = [lfnc_PathMake(x, lPathRoot) for x in lMake["include"]]
+        lAnyCpp = False
+        ## COMPILER
+        for lFileSource, lFileOptions in lMake["sources"].items():
+            lFileObject = f"{lFileSource}.o"
+            gApp["cache"]["objects"].append(lFileObject)
+            lIsCpp = (os.path.splitext(lFileSource)[1] in gApp["const"]["type_cpp"])
+            lAnyCpp = lAnyCpp or lIsCpp
+            lCompiler  = [] + gApp["const"]["gpp" if lIsCpp else "gcc"]
+            for x in (("compiler", "shared")):
+                lCompiler += lFileOptions.get("flag", {}).get(x, lMake.get("flag", {}).get(x, dfMake["flag"][x]))
+            for x in ((lFileOptions, lMake, dfMake)):
+                lCompiler += x.get("flag", {}).get("extra", [])
+            lCompiler += [f"-I{x}" for x in lMake.get("include", [])]
+            lCompiler += ["-c", lFileSource, "-o", lFileObject]
+            gApp["cache"]["commands"].append(lCompiler)
+        ## LINKER
+        lLinker  = [] + gApp["const"]["gpp" if lAnyCpp else "gcc"] + gApp["cache"]["objects"] + ["-o", lPathTarget]
+        lLinker += lMake.get("flag", {}).get("shared", dfMake["flag"]["shared"])
+        lLinker += lMake.get("flag", {}).get("linker", dfMake["flag"]["linker"])
+        lLinker += [f"-l{x}" for x in lMake.get("link", [])]
+        lLinker += [f"-L{x}" for x in lMake.get("include", [])]
+        gApp["cache"]["commands"].append(lLinker)
+        if gApp["set"]["exec"]:
+            gApp["cache"]["commands"].append(["chmod", "+x", lPathTarget])
+        if gApp["set"]["clean"]:
+            gApp["cache"]["commands"] += [["rm", x] for x in gApp["cache"]["objects"]]
+        ## EXECUTION
+        lHalt = 0x0
+        for x in gApp["cache"]["commands"]:
+            print(" ".join(x))
+            if not gApp["set"]["dry"]:
+                lHalt = int(subprocess.run(x).returncode)
+                if lHalt == 0x0:
+                    continue
+                print(f"error: non-zero exit code {lHalt}")
+                break;
+        return lHalt
+
+if __name__ == "__main__":
+    ZMK_Main(sys.argv)
