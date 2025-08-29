@@ -34,7 +34,7 @@ gApp = {
     "const": {
         "type_c": [".c"],
         "type_cpp": [".cpp"],
-        "arg_short": "fnyxc",
+        "arg_short": "fnyxcq",
         "arg_long": [],
         "gcc": ["gcc"],
         "gpp": ["g++"]
@@ -43,7 +43,8 @@ gApp = {
         "dry": True,
         "force": False,
         "exec": False,
-        "clean": False
+        "clean": False,
+        "log": True
     }
 }
 def ZMK_ScanSources(iPath):
@@ -91,6 +92,8 @@ def ZMK_Main(iArgs):
             gApp["set"]["exec"] = True
         elif lKey == "-c":
             gApp["set"]["clean"] = True
+        elif lKey == "-q":
+            gApp["set"]["log"] = False
     ## PARSE
     for lPathMake, lMake in ([((x, {} if os.path.isdir(x) else ZMK_MakeRead(x))) for x in lArgUser[1]] if lArgUser[1] else [((iArgs[0], {}))]):
         lPathRoot = lfnc_PathCanon(lPathMake if os.path.isdir(lPathMake) else os.path.dirname(lPathMake))
@@ -150,7 +153,7 @@ def ZMK_Main(iArgs):
                 if lHalt != 0x0:
                     print(f"zmake-err: non-zero subprocess exit code {lHalt}")
                     exit(lHalt)
-        if not gApp["set"]["dry"]:
+        if gApp["set"]["log"] and not gApp["set"]["dry"]:
             ZMK_MakeLog(f"{lPathMake}.log", lMake)
 
 if __name__ == "__main__":
