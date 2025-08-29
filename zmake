@@ -15,11 +15,15 @@ import sys, os, subprocess, getopt, json
 dfMake = {
     "flag": {
         # "shared": ["-O1"],
-        # "compiler": ["-Wfatal-errors", "-Wall", "-Wextra"],
+        # "compiler": [],
         "shared": ["-flto", "-O3"],
-        "compiler": ["-Wfatal-errors", "-Wall", "-Wextra", "-fexpensive-optimizations"],
+        "compiler": ["-fexpensive-optimizations"],
         "linker": ["-s"],
-        "extra": []
+        "extra": {
+            "shared": [],
+            "compiler": ["-Wfatal-errors", "-Werror", "-Wall", "-Wextra"],
+            "linker": []
+        }
     }
 }
 gApp = {
@@ -110,7 +114,8 @@ def ZMK_Main(iArgs):
             for x in (("compiler", "shared")):
                 lCompiler += lFileOptions.get("flag", {}).get(x, lMake.get("flag", {}).get(x, dfMake["flag"][x]))
             for x in ((lFileOptions, lMake, dfMake)):
-                lCompiler += x.get("flag", {}).get("extra", [])
+                lCompiler += x.get("flag", {}).get("extra", {}).get("shared", [])
+                lCompiler += x.get("flag", {}).get("extra", {}).get("compiler", [])
             lCompiler += [f"-I{x}" for x in lMake.get("include", [])]
             lCompiler += ["-c", lFileSource, "-o", lFileObject]
             gApp["cache"]["commands"].append(lCompiler)
@@ -118,6 +123,9 @@ def ZMK_Main(iArgs):
         lLinker  = [] + gApp["const"]["gpp" if lAnyCpp else "gcc"] + gApp["cache"]["objects"] + ["-o", lPathTarget]
         lLinker += lMake.get("flag", {}).get("shared", dfMake["flag"]["shared"])
         lLinker += lMake.get("flag", {}).get("linker", dfMake["flag"]["linker"])
+        for x in ((lMake, dfMake)):
+            lLinker += x.get("flag", {}).get("extra", {}).get("shared", [])
+            lLinker += x.get("flag", {}).get("extra", {}).get("linker", [])
         lLinker += [f"-l{x}" for x in lMake.get("link", [])]
         lLinker += [f"-L{x}" for x in lMake.get("include", [])]
         gApp["cache"]["commands"].append(lLinker)
