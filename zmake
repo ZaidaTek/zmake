@@ -24,27 +24,35 @@ dfMake = {
             "compiler": ["-Wfatal-errors", "-Werror", "-Wall", "-Wextra"],
             "linker": []
         }
-    },
-    "cache": {
-        "objects": [],
-        "commands": []
     }
 }
 gApp = {
     "const": {
         "type_c": [".c"],
         "type_cpp": [".cpp"],
-        "arg_short": "fnyxcq",
+        "arg_short": "fnyxcqz",
         "arg_long": [],
         "gcc": ["gcc"],
-        "gpp": ["g++"]
+        "gpp": ["g++"],
+        "host": [
+            ["date"],
+            ["neofetch", "--stdout"],
+            ["gcc", "--version"],
+            ["g++", "--version"]
+        ],
+        "sign": [
+            ["md5sum"],
+            ["sha1sum"],
+            ["sha256sum"]
+        ]
     },
     "set": {
         "dry": True,
         "force": False,
         "exec": False,
         "clean": False,
-        "log": True
+        "log": True,
+        "sign": False
     }
 }
 def ZMK_ScanSources(iPath):
@@ -94,11 +102,21 @@ def ZMK_Main(iArgs):
             gApp["set"]["clean"] = True
         elif lKey == "-q":
             gApp["set"]["log"] = False
+        elif lKey == "-z":
+            gApp["set"]["sign"] = True
+    ## HOST
+    for lCommand in gApp["const"]["host"]:
+        lProcess = subprocess.run(lCommand, capture_output = True, encoding = "utf-8")
+        if int(lProcess.returncode) != 0x0:
+            print(f"zmake-err: failed command {lProcess.args}")
+            exit(0x1)
+        gApp.setdefault("host", {})[str(lProcess.args)] = [x for x in lProcess.stdout.split("\n") if x]
     ## PARSE
     for lPathMake, lMake in ([((x, {} if os.path.isdir(x) else ZMK_MakeRead(x))) for x in lArgUser[1]] if lArgUser[1] else [((iArgs[0], {}))]):
         lPathRoot = lfnc_PathCanon(lPathMake if os.path.isdir(lPathMake) else os.path.dirname(lPathMake))
         lBaseTarget = lfnc_PathCanon(lMake.get("target", os.path.splitext(os.path.basename(lPathRoot))[0]))
         lPathTarget = lfnc_PathMake(lBaseTarget, lPathRoot)
+        lMake["host"] = gApp["host"].copy()
         if "sources" in lMake:
             if isinstance(lMake["sources"], list):
                 lCache = [lfnc_PathMake(x, lPathRoot) for x in lMake["sources"]]
@@ -117,8 +135,7 @@ def ZMK_Main(iArgs):
         ## COMPILER
         for lFileSource, lFileOptions in lMake["sources"].items():
             lFileObject = f"{lFileSource}.o"
-            lMake["cache"] = dfMake["cache"].copy()
-            lMake["cache"]["objects"].append(lFileObject)
+            lMake.setdefault("objects", []).append(lFileObject)
             lIsCpp = (os.path.splitext(lFileSource)[1] in gApp["const"]["type_cpp"])
             lAnyCpp = lAnyCpp or lIsCpp
             lCompiler  = [] + gApp["const"]["gpp" if lIsCpp else "gcc"]
@@ -129,9 +146,9 @@ def ZMK_Main(iArgs):
                 lCompiler += x.get("flag", {}).get("extra", {}).get("compiler", [])
             lCompiler += [f"-I{x}" for x in lMake.get("include", [])]
             lCompiler += ["-c", lFileSource, "-o", lFileObject]
-            lMake["cache"]["commands"].append(lCompiler)
+            lMake.setdefault("commands", []).append(lCompiler)
         ## LINKER
-        lLinker  = [] + gApp["const"]["gpp" if lAnyCpp else "gcc"] + lMake["cache"]["objects"] + ["-o", lPathTarget]
+        lLinker  = [] + gApp["const"]["gpp" if lAnyCpp else "gcc"] + lMake.get("objects", []) + ["-o", lPathTarget]
         lLinker += lMake.get("flag", {}).get("shared", dfMake["flag"]["shared"])
         lLinker += lMake.get("flag", {}).get("linker", dfMake["flag"]["linker"])
         for x in ((lMake, dfMake)):
@@ -139,13 +156,13 @@ def ZMK_Main(iArgs):
             lLinker += x.get("flag", {}).get("extra", {}).get("linker", [])
         lLinker += [f"-l{x}" for x in lMake.get("link", [])]
         lLinker += [f"-L{x}" for x in lMake.get("include", [])]
-        lMake["cache"]["commands"].append(lLinker)
+        lMake.setdefault("commands", []).append(lLinker)
         if gApp["set"]["exec"]:
-            lMake["cache"]["commands"].append(["chmod", "+x", lPathTarget])
+            lMake.setdefault("commands", []).append(["chmod", "+x", lPathTarget])
         if gApp["set"]["clean"]:
-            lMake["cache"]["commands"] += [["rm", x] for x in lMake["cache"]["objects"]]
+            lMake.setdefault("commands", []).extend(["rm", x] for x in lMake.get("objects", []))
         ## EXEC
-        for lCommand in lMake["cache"]["commands"]:
+        for lCommand in lMake.get("commands", []):
             lPrint = " ".join([(f"\"{x}\"" if " " in x else x) for x in lCommand]) #NOTE: otherwise commands break if path contains space and clipboard-copied by user
             print(f"zmake-cmd: {lPrint}")
             if not gApp["set"]["dry"]:
@@ -153,6 +170,15 @@ def ZMK_Main(iArgs):
                 if lHalt != 0x0:
                     print(f"zmake-err: non-zero subprocess exit code {lHalt}")
                     exit(lHalt)
+        if gApp["set"]["sign"] and not gApp["set"]["dry"]:
+            if os.path.exists(lPathTarget):
+                lMake["sign"] = {}
+                for lCommand in gApp["const"]["sign"]:
+                    lProcess = subprocess.run(lCommand + [lPathTarget], capture_output = True, encoding = "utf-8")
+                    if int(lProcess.returncode) != 0x0:
+                        print(f"zmake-err: failed command {lProcess.args}")
+                        exit(0x1)
+                    lMake["sign"][str(lProcess.args)] = [x for x in lProcess.stdout.split(" ", 1)[0].split("\n") if x]
         if gApp["set"]["log"] and not gApp["set"]["dry"]:
             ZMK_MakeLog(f"{lPathMake}.log", lMake)
 
