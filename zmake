@@ -14,10 +14,19 @@ import sys, os, subprocess, getopt, json
 
 ## "#DEFINES", TODO externalize user-definables to ZMK_APP
 ZMK_CONST = {
-    "zmake": "250830", # THIS IS (INTENTIONALLY) VERSION
+    "zmake": "250906", # THIS IS (INTENTIONALLY) "version"
     "encoding": "utf-8",
-    "arg_short": "fnyxcqzvh",
-    "arg_long": ["version", "help", "dry"],
+    "option": [
+        ("version", "bool:True", ("v", "version"), "Print version and exit"),
+        ("help", "bool:True", ("h", "help"), "Print this message and exit"),
+        ("dry", "bool:True", ("n", "dry"), "DRY run; print *only* commands and exit"),
+        ("dry", "bool:False", ("y", "live"), "LIVE run; print *and* execute commands"),
+        ("exec", "bool:True", ("x", "set-exec"), "Set +x executable flag on target"),
+        ("clean", "bool:True", ("c", "clean"), "Clean/delete *.o object files after build"),
+        ("sign", "bool:True", ("z", "sign"), "Generate hashsums of target build"),
+        ("log", "bool:False", ("q"), "Do not generate *.zmk.log files"),
+        #("force", "bool:True", ("f", "force"), "Force overwrite [Not implemented; will always overwrite]"),
+    ],
     "host": [
         ["date"],
         ["zmake", "--version"],
@@ -29,11 +38,17 @@ ZMK_CONST = {
         ["md5sum"],
         ["sha1sum"],
         ["sha256sum"]
-    ],
-    "help": "--TEXT--\n--TEXT--\n--TEXT--"
+    ]
 }
 ## APPLICATION SETTINGS, TODO zmake.jsonf
 ZMK_APP = {
+    "cache": {
+        "self": "",
+        "help": [],
+        "short": "",
+        "long": [],
+        "parse": [],
+    },
     "compiler": {
         "gcc": {"command": ["gcc"], "type": [".c"]},
         "g++": {"command": ["g++"], "type": [".cpp", ".c"]}
@@ -43,18 +58,20 @@ ZMK_APP = {
         "g++": {"command": ["g++"], "type": [".cpp.o", ".c.o"]}
     },
     "set": {
+        "version": False,
+        "help": False,
         "dry": True,
-        "force": False,
         "exec": False,
         "clean": False,
         "log": True,
-        "sign": False
+        "sign": False,
+        "force": False,
     }
 }
 ## GLOBAL MAKE ENVIRONMENT, TODO zmake.zmk
 ZMK_MAKE = {
     "flag": {
-        "shared": ["-flto", "-O3"],
+        "shared": ["-O3", "-flto"],
         "compiler": ["-fexpensive-optimizations"],
         "linker": ["-s"],
         "extra": {
@@ -65,17 +82,64 @@ ZMK_MAKE = {
     }
 }
 ## UTIL FUNCTIONS
-def ZMK_UtilExec(iCommand, iCapture = True, iEncoding = ZMK_CONST["encoding"]):
+def ZMK_UtilCommandExec(iCommand, iCapture = True, iEncoding = ZMK_CONST["encoding"]):
     return subprocess.run(iCommand, capture_output = iCapture, encoding = iEncoding)
+def ZMK_UtilCommandPrint(iCommand, iQuote = "\""):
+    return " ".join(((f"{iQuote}{x}{iQuote}") if " " in x else x) for x in iCommand)
+def ZMK_UtilMessage(iMessage = "message", iContext = "msg", iOutput = ""):
+    if iMessage:
+        print(f"zmake-{iContext}: {iMessage if isinstance(iMessage, str) else str(iMessage)}", file=sys.stderr)
+    if iOutput:
+        print(iOutput, file=sys.stdout)
+def ZMK_UtilWarn(iMessage = "unknown warning"):
+    ZMK_UtilMessage(iMessage, "wrn")
+def ZMK_UtilError(iMessage = "unknown error", iCode = 0x1):
+    ZMK_UtilMessage(iMessage, "err")
+    exit(iCode)
+def ZMK_UtilOption(iArgs, iList = [], ioCache = {}, ioUser = {}):
+    ioCache["self"] = iArgs[0]
+    ioCache["help"] = [f"Usage: {os.path.basename(iArgs[0])} [option(s)] <path(s)>", "Options:"]
+    ioCache["short"] = ""
+    ioCache["long"] = []
+    ioCache["parse"] = []
+    for lTarget, lType, lParams, lDesc in iList:
+        lFlags = ([f"-{x}" for x in lParams if len(x) == 1], [f"--{x}" for x in lParams if len(x) > 1])
+        lRequireArg = lType and len(lType.split(":")) < 2
+        for x in lFlags[0]:
+            ioCache["short"] += x[1:2] + (":" if lRequireArg else "")
+        for x in lFlags[1]:
+            ioCache["long"].append(x[2:] + ("=" if lRequireArg else ""))
+        ioCache["parse"].append([lTarget, lType, lFlags[0] + lFlags[1]])
+        lUnit = {"str": "<string>", "bool": "<bool>", "int": "<integer>", "flt": "<float>"}.get(lType, "<none>")
+        ioCache["help"].append(f"{' ' * 2}{lFlags[0][0] if lFlags[0] else '':2}, {lFlags[1][0] if lFlags[1] else '':12}{' ' * 2}{lUnit:^12}{' ' * 2}{lDesc if isinstance(lDesc, str) else lDesc[0]}")
+        if not isinstance(lDesc, str):
+            ioCache["help"][-1] += "".join([f"\n{' ' * 22}{x[0]:^8}{' ' * 4}{x[1]}" for x in lDesc[1:]])
+    def lParseString(iiValue):
+        return iiValue
+    def lParseFloat(iiValue):
+        return eval(iiValue)
+    def lParseBool(iiValue):
+        return bool(eval(iiValue[0:1].upper() + iiValue[1:].lower()))
+    def lParseInt(iiValue):
+        return int(eval(iiValue))
+    try:
+        lArgs = getopt.gnu_getopt(iArgs[1:], ioCache["short"], longopts = ioCache["long"])
+    except getopt.GetoptError as lError:
+        ZMK_UtilError(lError)
+    for (lKey, lValue) in lArgs[0]:
+        for lTarget, lType, lParams in ioCache["parse"]:
+            if lKey in lParams and lType:
+                lMode = lType.split(":", 1)
+                ioUser[lTarget] = ({"str": lParseString, "flt": lParseFloat, "bool": lParseBool, "int": lParseInt}[lMode[0]])(lMode[1] if len(lMode) > 1 else lValue)
+    ioUser["input"] = lArgs[1]
+    return ioUser
 def ZMK_UtilPathExpand(iPath):
     return os.path.expanduser(os.path.normpath(iPath))
-def ZMK_UtilPathMakeTarget(iPathTarget, iMakeRoot):
-    return ZMK_UtilPathExpand(iPathTarget if os.path.isabs(iPathTarget) else os.path.join(iMakeRoot, iPathTarget))
-def ZMK_UtilFileScan(iPathDir, iFileExtensions):
+def ZMK_UtilDirScan(iPath, iFilter = []):
     lTargets = []
-    for lScanRoot, lScanDirs, lScanFiles in os.walk(iPathDir):
+    for lScanRoot, lScanDirs, lScanFiles in os.walk(iPath if os.path.isdir(iPath) else os.path.dirname(iPath)):
         for x in lScanFiles:        
-            if os.path.splitext(x)[1] in iFileExtensions:
+            if not iFilter or os.path.splitext(x)[1] in iFilter:
                 lTargets.append(os.path.join(lScanRoot, x))
     return lTargets
 def ZMK_UtilJSONLoad(iPath):
@@ -83,164 +147,169 @@ def ZMK_UtilJSONLoad(iPath):
         with open(iPath, "r", encoding = ZMK_CONST["encoding"]) as lFile:
             lData = json.load(lFile)
     except:
-        print(f"zmake-err: opening {iPath}")
-        exit(0x1)
+        ZMK_UtilError(f"opening {iPath}")
     return lData
 def ZMK_UtilJSONSave(iPath, iData):
     try:
         with open(iPath, "w", encoding = ZMK_CONST["encoding"]) as lFile:
             json.dump(iData, lFile, indent = 4, ensure_ascii = False)
     except:
-        print(f"zmake-err: writing {iPath}")
-        exit(0x1)
+        ZMK_UtilError(f"writing {iPath}")
 ## ZMAKE FUNCTIONS
-def ZMK_MakeLoad(iPath, iData):
+def ZMK_MakePath(iPathTarget, iMakeRoot):
+    return ZMK_UtilPathExpand(iPathTarget if os.path.isabs(iPathTarget) else os.path.join(iMakeRoot, iPathTarget))
+def ZMK_MakeLoad(iPath):
+    lData = {} if os.path.isdir(iPath) else ZMK_UtilJSONLoad(iPath)
     lPathRoot = ZMK_UtilPathExpand(iPath if os.path.isdir(iPath) else os.path.dirname(iPath))
-    lBaseTarget = ZMK_UtilPathExpand(iData.get("target", os.path.splitext(os.path.basename(lPathRoot))[0]))
-    iData["target"] = ZMK_UtilPathMakeTarget(lBaseTarget, lPathRoot)
-    iData.setdefault("zmake", ZMK_MAKE.get("zmake", ZMK_CONST["zmake"]))
-    iData["host"] = ZMK_APP["host"].copy()
-    # if "sources" in iData:
-    if isinstance(iData["sources"], list):
-        lCache = [ZMK_UtilPathMakeTarget(x, lPathRoot) for x in iData["sources"]]
-        iData["sources"] = {}
-        for x in lCache:
-            iData["sources"][x] = {}
-    elif isinstance(iData["sources"], dict):
-        for x in [x for x in iData["sources"].keys()]:
-            iData["sources"][ZMK_UtilPathMakeTarget(x, lPathRoot)] = iData["sources"].pop(x)
-    # else:
-        # for x in ZMK_UtilFileScan(lPathRoot, ZMK_CONST["type_c"] + ZMK_CONST["type_cpp"]):
-            # iData.setdefault("sources", {})[x] = {}
-    if "include" in iData:
-        iData["include"] = [ZMK_UtilPathMakeTarget(x, lPathRoot) for x in iData["include"]]
-    return iData
+    lBaseTarget = ZMK_UtilPathExpand(lData.get("target", os.path.splitext(os.path.basename(lPathRoot))[0]))
+    lData["target"] = ZMK_MakePath(lBaseTarget, lPathRoot)
+    lData.setdefault("zmake", ZMK_MAKE.get("zmake", ZMK_CONST["zmake"]))
+    lData["host"] = ZMK_APP["host"].copy()
+    if "sources" in lData:
+        if isinstance(lData["sources"], list):
+            lCache = [ZMK_MakePath(x, lPathRoot) for x in lData["sources"]]
+            lData["sources"] = {}
+            for x in lCache:
+                lData["sources"][x] = {}
+        elif isinstance(lData["sources"], dict):
+            for x in list(lData["sources"].keys()):
+                lData["sources"][ZMK_MakePath(x, lPathRoot)] = lData["sources"].pop(x)
+    else:
+        for x in ZMK_UtilDirScan(lPathRoot, list(ZMK_APP["cache"]["type"]["compiler"].keys())):
+            lData.setdefault("sources", {})[x] = {}
+    lCompilers = ZMK_APP["cache"]["type"]["compiler"]
+    for lPathSource, lOptSource in lData["sources"].items():
+        lOptSource["handle"] = lCompilers.get(os.path.splitext(lPathSource)[1], [])
+        if not lOptSource["handle"]:
+            ZMK_UtilError(f"unknown source type {lPathSource}")
+    lLinkers = {}
+    lPartial = []
+    for lPathSource, lOptionsSource in lData.get("sources", {}).items():
+        for x in lOptionsSource.get("handle", []):
+            lLinkers[x] = lLinkers.get(x, 0) + 1
+    for lName, lCount in lLinkers.items():
+        if lCount < len(lData.get("sources", [])):
+            lPartial.append(lName)
+    for lRemove in lPartial:
+        lLinkers.pop(lRemove)
+    if len(lLinkers.keys()) < 1:
+        ZMK_UtilError("no suitable linker for all objects found")
+    if not "link" in lData or isinstance(lData.get("link", []), list):
+        lData["link"] = {"handle": list(lLinkers.keys()), "lib": lData.get("link", [])}
+    if "include" in lData:
+        lData["include"] = [ZMK_MakePath(x, lPathRoot) for x in lData["include"]]
+    return lData
 def ZMK_MakeCommand(iData, iContexts):
     for lContext in iContexts:
         lTarget = iData.setdefault("commands", {}).setdefault(lContext, [])
         if lContext == "compile":
-            # TODO analysis should be in ZMK_MakeLoad
             for lPathSource, lOptionsSource in iData["sources"].items():
-                lPathObject = f"{lPathSource}.o"
-                lOptionsObject = {}
-                iData.setdefault("objects", {})[lPathObject] = lOptionsObject
-                for lName, lCapabilities in ZMK_APP["compiler"].items():
-                    if os.path.splitext(lPathSource)[1] in lCapabilities["type"]:
-                        lOptionsSource["handle"] = lName
-                        break
-                if not "handle" in lOptionsSource and not lOptionsSource["handle"]:
-                    print("zmake-err: unknown source type")
-                    exit(0x1)
-                lTemplate = [] + ZMK_APP["compiler"][lOptionsSource["handle"]]["command"]
-                for x in (("compiler", "shared")):
+                lTemplate = [] + ZMK_APP["compiler"][lOptionsSource["handle"][0]]["command"] # TODO find out if need (or better/no diff) g++ for compiling all if linking with g++
+                for x in (("shared", "compiler")):
                     lTemplate += lOptionsSource.get("flag", {}).get(x, iData.get("flag", {}).get(x, ZMK_MAKE["flag"][x]))
                 for x in ((lOptionsSource, iData, ZMK_MAKE)):
                     lTemplate += x.get("flag", {}).get("extra", {}).get("shared", [])
                     lTemplate += x.get("flag", {}).get("extra", {}).get("compiler", [])
                 lTemplate += [f"-I{x}" for x in iData.get("include", [])]
-                lTemplate += ["-c", lPathSource, "-o", lPathObject]
+                lTemplate += ["-c", lPathSource, "-o", f"{lPathSource}.o"]
                 lTarget.append(lTemplate)
         elif lContext == "link":
-            lLinkers = []
-            # TODO analysis should be in ZMK_MakeLoad
-            for lPathObject, lOptionsObject in iData.get("objects", {}).items():
-                for lName, lCapabilities in ZMK_APP["linker"].items():
-                    lExtRoot, lExtLast = os.path.splitext(lPathObject)
-                    if (os.path.splitext(lExtRoot)[1] + lExtLast) in lCapabilities["type"]:
-                        lOptionsObject["handle"] = lName
-                        if lName not in lLinkers:
-                            lLinkers.append(lName)
-                        break
-                if not "handle" in lOptionsObject and not lOptionsObject["handle"]:
-                    print("zmake-err: unknown object type")
-                    exit(0x1)
-            # TODO when cpp is involved
-            lTemplate  = ZMK_APP["linker"][lLinkers[0]]["command"] + list(iData.get("objects", {}).keys()) + ["-o", iData["target"]]
+            lTemplate  = ZMK_APP["linker"][iData["link"]["handle"][0]]["command"] + [(x + ".o") for x in iData.get("sources", {}).keys()] + ["-o", iData["target"]]
             lTemplate += iData.get("flag", {}).get("shared", ZMK_MAKE["flag"]["shared"])
             lTemplate += iData.get("flag", {}).get("linker", ZMK_MAKE["flag"]["linker"])
             for x in ((iData, ZMK_MAKE)):
                 lTemplate += x.get("flag", {}).get("extra", {}).get("shared", [])
                 lTemplate += x.get("flag", {}).get("extra", {}).get("linker", [])
-            lTemplate += [f"-l{x}" for x in iData.get("link", [])]
             lTemplate += [f"-L{x}" for x in iData.get("include", [])]
+            lTemplate += [f"-l{x}" for x in iData.get("link", {}).get("lib", [])]
             lTarget.append(lTemplate)
         elif lContext == "clean":
             if ZMK_APP["set"]["clean"]:
-                # lTarget.extend(["rm", x] for x in list(iData.get("objects", {}).keys()))
-                lTarget.append(["rm"] + list(iData.get("objects", {}).keys()))
+                lTarget.append(["rm"] + [(x + ".o") for x in iData.get("sources", {}).keys()])
         elif lContext == "finish":
             if ZMK_APP["set"]["exec"]:
                 lTarget.append(["chmod", "+x", iData["target"]])
         else:
             pass
     return iData
-## __MAIN__ FUNCTION
-def ZMK_Main(iArgs):
-    ## USER OPTIONS
-    try:
-        lArgUser = getopt.gnu_getopt(iArgs[1:], ZMK_CONST["arg_short"], longopts=ZMK_CONST["arg_long"])
-    except getopt.GetoptError as lError:
-        print(lError)
-        exit(0x1)
-    for lKey, lValue in lArgUser[0]:
-        if lKey == "-v" or lKey == "--version":
-            print(f"zmake-wrn: version\n{ZMK_CONST['zmake']}")
-            exit(0x0)
-        elif lKey == "-h" or lKey == "--help":
-            print(f"zmake-wrn: help\n{ZMK_CONST['help']}")
-            exit(0x0)
-        elif lKey == "-n" or lKey == "--dry":
-            ZMK_APP["set"]["dry"] = True
-        elif lKey == "-y":
-            ZMK_APP["set"]["dry"] = False
-        elif lKey == "-f":
-            ZMK_APP["set"]["force"] = True # TODO implement me!
-        elif lKey == "-x":
-            ZMK_APP["set"]["exec"] = True
-        elif lKey == "-c":
-            ZMK_APP["set"]["clean"] = True
-        elif lKey == "-q":
-            ZMK_APP["set"]["log"] = False
-        elif lKey == "-z":
-            ZMK_APP["set"]["sign"] = True
+## __MAIN__ FUNCTIONS
+def ZMK_Setup():
+    ## SANITY
+    if not ZMK_APP["set"].get("input", []):
+        ZMK_UtilError("no zmake .zmk file provided")
+        # TODO test this, makes zmake work w/o .zmk file in CWD using global defaults and dir-scanned sources
+        # ZMK_APP["set"]["input"] = [os.path.dirname(iArgs[0])]
+        # TODO (then also imply -q?), and then allow use -g to autogenerate .zmk file
+    for x in ZMK_APP["set"]["input"]:
+        if not x or not os.path.exists(x):
+            ZMK_UtilError(f"invalid filepath {x:!r}")
     ## HOST
     for lCommand in ZMK_CONST["host"]:
-        lProcess = ZMK_UtilExec(lCommand)
+        lProcess = ZMK_UtilCommandExec(lCommand)
         if lProcess.returncode != 0x0:
-            print(f"zmake-err: failed command {lProcess.args}")
-            exit(0x1)
+            ZMK_UtilError(f"failed command {ZMK_UtilCommandPrint(lProcess.args)}")
         ZMK_APP.setdefault("host", {})[str(lProcess.args)] = [x for x in lProcess.stdout.split("\n") if x]
+    ## TOOLS
+    lTypes = ZMK_APP["cache"].setdefault("type", {})
+    for lContext in ["compiler", "linker"]:
+        for lName, lCaps in ZMK_APP[lContext].items():
+            for x in lCaps["type"]:
+                if not x in lTypes.setdefault(lContext, {}):
+                    lTypes.get(lContext).setdefault(x, []).append(lName)
+def ZMK_Main(iArgs):
+    ## OPTION
+    ZMK_UtilOption(iArgs, ZMK_CONST["option"], ZMK_APP["cache"], ZMK_APP["set"])
+    ## VERSION
+    if ZMK_APP["set"]["version"]:
+        ZMK_UtilMessage("", "", f"zmake-v{ZMK_CONST['zmake']}")
+        return 0x0
+    ## HELP
+    if ZMK_APP["set"]["help"]:
+        ZMK_UtilMessage("", "", "\n".join(ZMK_APP["cache"]["help"]))
+        return 0x0
+    ## SETUP
+    ZMK_Setup()
     ## PARSE
-    if lArgUser[1]:
-        lTargets = [[x, {} if os.path.isdir(x) else ZMK_UtilJSONLoad(x)] for x in lArgUser[1]]
-    else:
-        # lTargets = [[iArgs[0], {}]]
-        print("zmake-err: no zmake .zmk file provided")
-        exit(0x1)
-    for lPathMake, lMake in lTargets:
-        ZMK_MakeLoad(lPathMake, lMake)
+    for lPathMake in ZMK_APP["set"]["input"]:
+        lMake = ZMK_MakeLoad(lPathMake)
         ZMK_MakeCommand(lMake, ["compile", "link", "clean", "finish"])
-        for lType, lList in lMake.get("commands", []).items():
+        for lType, lList in lMake.get("commands", {}).items():
             for lCommand in lList:
-                lPrint = " ".join([(f"\"{x}\"" if " " in x else x) for x in lCommand]) # NOTE: otherwise commands break if path contains space and clipboard-copied by user
-                print(f"zmake-cmd: {lPrint}")
+                ZMK_UtilMessage(ZMK_UtilCommandPrint(lCommand), f"cmd[{lType}]")
                 if not ZMK_APP["set"]["dry"]:
-                    lHalt = ZMK_UtilExec(lCommand, False).returncode # NOTE: subprocess args are list, not string and space-delimited
+                    lHalt = ZMK_UtilCommandExec(lCommand, False).returncode
                     if lHalt != 0x0:
-                        print(f"zmake-err: non-zero subprocess exit code {lHalt}")
-                        exit(lHalt)
+                        ZMK_UtilError(f"subprocess non-zero exit code {lHalt}")
         if ZMK_APP["set"]["sign"] and not ZMK_APP["set"]["dry"]:
             if os.path.exists(lMake["target"]):
                 lMake["sign"] = {}
                 for lCommand in ZMK_CONST["sign"]:
-                    lProcess = ZMK_UtilExec(lCommand + [lMake["target"]])
+                    lProcess = ZMK_UtilCommandExec(lCommand + [lMake["target"]])
                     if lProcess.returncode != 0x0:
-                        print(f"zmake-err: failed command {lProcess.args}")
-                        exit(0x1)
+                        ZMK_UtilError(f"failed command {ZMK_UtilCommandPrint(lProcess.args)}")
                     lMake["sign"][str(lProcess.args)] = [x for x in lProcess.stdout.split(" ", 1)[0].split("\n") if x]
         if ZMK_APP["set"]["log"] and not ZMK_APP["set"]["dry"]:
-            ZMK_UtilJSONSave(f"{lPathMake}.log", lMake)
+            ZMK_UtilJSONSave(f"{lPathMake}.log", lMake) # TODO when folder
+    return 0x0
 ## __MAIN__ INIT
 if __name__ == "__main__":
-    ZMK_Main(sys.argv)
-    exit(0x0)
+    exit(ZMK_Main(sys.argv))
+
+## 'UNDER CONSTRUCTION'
+#["gcc", "|%FLAGS%", "|-I|%INCLUDES%", "|-c|%SOURCE%", "|-o|%SOURCE%.o"]
+#["gcc", "|%SOURCES%.o", "|-o|%TARGET%", "|%FLAGS%", "|-L|%INCLUDES%","|-l|%LINKS%"]
+# def ZMK_CommandParse(iCommand, iSubstitutes):
+    # lParsed = []
+    # for lArg in iCommand:
+        # if lArg[0] == "|":
+            # lSplit = lArg[1:].split("|")
+            # for x in lSplit:
+                # lSub = iSubstitutes.get(x, x)
+                # if isinstance(lSub, str):
+                    # lParsed.append(x)
+                # elif isinstance(lSub[0], str):
+                    # lParsed.extend(iSubstitutes[x])
+                    # TODO here
+        # else:
+            # lParsed.append(lArg)
+    # return lParsed
