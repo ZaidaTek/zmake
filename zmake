@@ -14,7 +14,7 @@ import sys, os, subprocess, getopt, json
 
 ## "#DEFINES", TODO externalize user-definables to ZMK_APP
 ZMK_CONST = {
-    "zmake": "250906", # THIS IS (INTENTIONALLY) "version"
+    "zmake": "250912", # THIS IS (INTENTIONALLY) "version"
     "encoding": "utf-8",
     "option": [
         ("version", "bool:True", ("v", "version"), "Print version and exit"),
@@ -30,7 +30,7 @@ ZMK_CONST = {
     "host": [
         ["date"],
         ["zmake", "--version"],
-        ["neofetch", "--stdout"],
+        ["neofetch", "--stdout", "--disable", "uptime"],
         ["gcc", "--version"],
         ["g++", "--version"]
     ],
