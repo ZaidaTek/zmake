@@ -14,7 +14,7 @@ import sys, os, subprocess, getopt, json
 
 ## "#DEFINES", TODO externalize user-definables to ZMK_APP
 ZMK_CONST = {
-    "zmake": "250912", # THIS IS (INTENTIONALLY) "version"
+    "zmake": "250915", # this is (DELIBERATELY) "version"
     "encoding": "utf-8",
     "option": [
         ("version", "bool:True", ("v", "version"), "Print version and exit"),
@@ -72,7 +72,7 @@ ZMK_APP = {
 ZMK_MAKE = {
     "flag": {
         "shared": ["-O3", "-flto"],
-        "compiler": ["-fexpensive-optimizations"],
+        "compiler": [],
         "linker": ["-s"],
         "extra": {
             "shared": [],
@@ -295,6 +295,9 @@ def ZMK_Main(iArgs):
 if __name__ == "__main__":
     exit(ZMK_Main(sys.argv))
 
+## TODO
+## 25258 fflag == .zmk project forced flag, else ["flag"] == current ["extra"] compound add by default
+##       NOTE requires either code to interpret older .zmk or convert all .zmk to conform
 ## 'UNDER CONSTRUCTION'
 #["gcc", "|%FLAGS%", "|-I|%INCLUDES%", "|-c|%SOURCE%", "|-o|%SOURCE%.o"]
 #["gcc", "|%SOURCES%.o", "|-o|%TARGET%", "|%FLAGS%", "|-L|%INCLUDES%","|-l|%LINKS%"]
