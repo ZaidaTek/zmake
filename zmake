@@ -14,9 +14,9 @@ import sys, os, subprocess, getopt, json
 
 ## "#DEFINES", TODO externalize user-definables to ZMK_APP
 ZMK_CONST = {
-    "zmake": "250915", # this is (DELIBERATELY) "version"
+    "zmake": "250917", # this is (DELIBERATELY) "version"
     "encoding": "utf-8",
-    "option": [
+    "option": [ # NOTE leaving trailing comma for single-element tuple, e.g. ("longopt_only",)
         ("version", "bool:True", ("v", "version"), "Print version and exit"),
         ("help", "bool:True", ("h", "help"), "Print this message and exit"),
         ("dry", "bool:True", ("n", "dry"), "DRY run; print *only* commands and exit"),
@@ -86,9 +86,9 @@ def ZMK_UtilCommandExec(iCommand, iCapture = True, iEncoding = ZMK_CONST["encodi
     return subprocess.run(iCommand, capture_output = iCapture, encoding = iEncoding)
 def ZMK_UtilCommandPrint(iCommand, iQuote = "\""):
     return " ".join(((f"{iQuote}{x}{iQuote}") if " " in x else x) for x in iCommand)
-def ZMK_UtilMessage(iMessage = "message", iContext = "msg", iOutput = ""):
+def ZMK_UtilMessage(iMessage = "message", iContext = "msg", iOutput = "", iTitle = "zmake"):
     if iMessage:
-        print(f"zmake-{iContext}: {iMessage if isinstance(iMessage, str) else str(iMessage)}", file=sys.stderr)
+        print(f"{iTitle}{'-' if iTitle else ''}{iContext}{': ' if iTitle or iContext else ''}{iMessage if isinstance(iMessage, str) else str(iMessage)}", file=sys.stderr)
     if iOutput:
         print(iOutput, file=sys.stdout)
 def ZMK_UtilWarn(iMessage = "unknown warning"):
@@ -96,41 +96,45 @@ def ZMK_UtilWarn(iMessage = "unknown warning"):
 def ZMK_UtilError(iMessage = "unknown error", iCode = 0x1):
     ZMK_UtilMessage(iMessage, "err")
     exit(iCode)
-def ZMK_UtilOption(iArgs, iList = [], ioCache = {}, ioUser = {}):
-    ioCache["self"] = iArgs[0]
-    ioCache["help"] = [f"Usage: {os.path.basename(iArgs[0])} [option(s)] <path(s)>", "Options:"]
-    ioCache["short"] = ""
-    ioCache["long"] = []
-    ioCache["parse"] = []
+def ZMK_UtilOption(iArgs, iList = [], ioUser = {}):
+    ioUser["__PATH__"] = iArgs[0]
+    ioUser["__NAME__"] = os.path.basename(iArgs[0])
+    ioUser["__HELP__"] = [f"Usage: {os.path.basename(iArgs[0])} [option(s)] <path(s)>", "Options:"]
+    lShort = ""
+    lLong = []
+    lList = []
     for lTarget, lType, lParams, lDesc in iList:
         lFlags = ([f"-{x}" for x in lParams if len(x) == 1], [f"--{x}" for x in lParams if len(x) > 1])
         lRequireArg = lType and len(lType.split(":")) < 2
         for x in lFlags[0]:
-            ioCache["short"] += x[1:2] + (":" if lRequireArg else "")
+            lShort += x[1:2] + (":" if lRequireArg else "")
         for x in lFlags[1]:
-            ioCache["long"].append(x[2:] + ("=" if lRequireArg else ""))
-        ioCache["parse"].append([lTarget, lType, lFlags[0] + lFlags[1]])
+            lLong.append(x[2:] + ("=" if lRequireArg else ""))
+        lList.append([lTarget, lType, lFlags[0] + lFlags[1]])
         lUnit = {"str": "<string>", "bool": "<bool>", "int": "<integer>", "flt": "<float>"}.get(lType, "<none>")
-        ioCache["help"].append(f"{' ' * 2}{lFlags[0][0] if lFlags[0] else '':2}, {lFlags[1][0] if lFlags[1] else '':12}{' ' * 2}{lUnit:^12}{' ' * 2}{lDesc if isinstance(lDesc, str) else lDesc[0]}")
+        ioUser["__HELP__"].append(f"{' ' * 2}{lFlags[0][0] if lFlags[0] else '':2}{', ' if lFlags[0] else '  '}{lFlags[1][0] if lFlags[1] else '':12}{' ' * 2}{lUnit:^12}{' ' * 2}{lDesc if isinstance(lDesc, str) else lDesc[0]}")
         if not isinstance(lDesc, str):
-            ioCache["help"][-1] += "".join([f"\n{' ' * 22}{x[0]:^8}{' ' * 4}{x[1]}" for x in lDesc[1:]])
+            ioUser["__HELP__"][-1] += "".join([f"\n{' ' * 22}{x[0]:^8}{' ' * 4}{x[1]}" for x in lDesc[1:]])
     def lParseString(iiValue):
         return iiValue
     def lParseFloat(iiValue):
         return eval(iiValue)
-    def lParseBool(iiValue):
-        return bool(eval(iiValue[0:1].upper() + iiValue[1:].lower()))
     def lParseInt(iiValue):
         return int(eval(iiValue))
+    def lParseBool(iiValue):
+        return bool(eval(iiValue[0:1].upper() + iiValue[1:].lower()))
     try:
-        lArgs = getopt.gnu_getopt(iArgs[1:], ioCache["short"], longopts = ioCache["long"])
+        lArgs = getopt.gnu_getopt(iArgs[1:], lShort, lLong)
     except getopt.GetoptError as lError:
         ZMK_UtilError(lError)
     for (lKey, lValue) in lArgs[0]:
-        for lTarget, lType, lParams in ioCache["parse"]:
+        for lTarget, lType, lParams in lList:
             if lKey in lParams and lType:
                 lMode = lType.split(":", 1)
-                ioUser[lTarget] = ({"str": lParseString, "flt": lParseFloat, "bool": lParseBool, "int": lParseInt}[lMode[0]])(lMode[1] if len(lMode) > 1 else lValue)
+                try:
+                    ioUser[lTarget] = ({"str": lParseString, "flt": lParseFloat, "int": lParseInt, "bool": lParseBool}[lMode[0]])(lMode[1] if len(lMode) > 1 else lValue)
+                except:
+                    ZMK_UtilError(f"unable to parse '{lKey} {lValue}' as <{lMode[0]}> value")
     ioUser["input"] = lArgs[1]
     return ioUser
 def ZMK_UtilPathExpand(iPath):
@@ -242,7 +246,7 @@ def ZMK_Setup():
         # TODO (then also imply -q?), and then allow use -g to autogenerate .zmk file
     for x in ZMK_APP["set"]["input"]:
         if not x or not os.path.exists(x):
-            ZMK_UtilError(f"invalid filepath {x:!r}")
+            ZMK_UtilError(f"invalid filepath {x}")
     ## HOST
     for lCommand in ZMK_CONST["host"]:
         lProcess = ZMK_UtilCommandExec(lCommand)
@@ -258,14 +262,14 @@ def ZMK_Setup():
                     lTypes.get(lContext).setdefault(x, []).append(lName)
 def ZMK_Main(iArgs):
     ## OPTION
-    ZMK_UtilOption(iArgs, ZMK_CONST["option"], ZMK_APP["cache"], ZMK_APP["set"])
+    ZMK_UtilOption(iArgs, ZMK_CONST["option"], ZMK_APP["set"])#, ZMK_APP["cache"])
     ## VERSION
     if ZMK_APP["set"]["version"]:
         ZMK_UtilMessage("", "", f"zmake-v{ZMK_CONST['zmake']}")
         return 0x0
     ## HELP
     if ZMK_APP["set"]["help"]:
-        ZMK_UtilMessage("", "", "\n".join(ZMK_APP["cache"]["help"]))
+        ZMK_UtilMessage("", "", "\n".join(ZMK_APP["set"]["__HELP__"]))
         return 0x0
     ## SETUP
     ZMK_Setup()
