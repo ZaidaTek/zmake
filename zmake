@@ -14,7 +14,7 @@ import sys, os, subprocess, getopt, json
 
 ## "#DEFINES", TODO externalize user-definables to ZMK_APP
 ZMK_CONST = {
-    "zmake": "250917", # this is (DELIBERATELY) "version"
+    "zmake": "250925", # "version"
     "encoding": "utf-8",
     "option": [ # NOTE leaving trailing comma for single-element tuple, e.g. ("longopt_only",)
         ("version", "bool:True", ("v", "version"), "Print version and exit"),
@@ -40,6 +40,7 @@ ZMK_CONST = {
         ["sha256sum"]
     ]
 }
+ZMK_COLOR = {"PL": "\033[95m", "BL": "\033[94m", "CY": "\033[96m", "GN": "\033[92m", "YE": "\033[93m", "RD": "\033[91m", "NN": "\033[0m", "BD": "\033[1m", "UN": "\033[4m"}
 ## APPLICATION SETTINGS, TODO zmake.jsonf
 ZMK_APP = {
     "cache": {
@@ -86,15 +87,15 @@ def ZMK_UtilCommandExec(iCommand, iCapture = True, iEncoding = ZMK_CONST["encodi
     return subprocess.run(iCommand, capture_output = iCapture, encoding = iEncoding)
 def ZMK_UtilCommandPrint(iCommand, iQuote = "\""):
     return " ".join(((f"{iQuote}{x}{iQuote}") if " " in x else x) for x in iCommand)
-def ZMK_UtilMessage(iMessage = "message", iContext = "msg", iOutput = "", iTitle = "zmake"):
+def ZMK_UtilMessage(iMessage = "message", iContext = f"{ZMK_COLOR['BL']}msg{ZMK_COLOR['NN']}", iOutput = "", iTitle = f"{ZMK_COLOR['GN'] + ZMK_COLOR['BD']}zmake{ZMK_COLOR['NN'] + ZMK_COLOR['NN']}"):
     if iMessage:
         print(f"{iTitle}{'-' if iTitle else ''}{iContext}{': ' if iTitle or iContext else ''}{iMessage if isinstance(iMessage, str) else str(iMessage)}", file=sys.stderr)
     if iOutput:
         print(iOutput, file=sys.stdout)
 def ZMK_UtilWarn(iMessage = "unknown warning"):
-    ZMK_UtilMessage(iMessage, "wrn")
+    ZMK_UtilMessage(iMessage, f"{ZMK_COLOR['YE']}wrn{ZMK_COLOR['NN']}")
 def ZMK_UtilError(iMessage = "unknown error", iCode = 0x1):
-    ZMK_UtilMessage(iMessage, "err")
+    ZMK_UtilMessage(iMessage, f"{ZMK_COLOR['RD']}err{ZMK_COLOR['NN']}")
     exit(iCode)
 def ZMK_UtilOption(iArgs, iList = [], ioUser = {}):
     ioUser["__PATH__"] = iArgs[0]
@@ -209,21 +210,25 @@ def ZMK_MakeCommand(iData, iContexts):
         if lContext == "compile":
             for lPathSource, lOptionsSource in iData["sources"].items():
                 lTemplate = [] + ZMK_APP["compiler"][lOptionsSource["handle"][0]]["command"] # TODO find out if need (or better/no diff) g++ for compiling all if linking with g++
-                for x in (("shared", "compiler")):
-                    lTemplate += lOptionsSource.get("flag", {}).get(x, iData.get("flag", {}).get(x, ZMK_MAKE["flag"][x]))
-                for x in ((lOptionsSource, iData, ZMK_MAKE)):
-                    lTemplate += x.get("flag", {}).get("extra", {}).get("shared", [])
-                    lTemplate += x.get("flag", {}).get("extra", {}).get("compiler", [])
+                for lType in (("shared", "compiler")):
+                    lForce = lOptionsSource.get("flag:force", {}).get(lType, iData.get("flag:force", {}).get(lType, ZMK_MAKE.get("flag:force", {}).get(lType, [])))
+                    if lForce:
+                        lTemplate += lForce
+                    else:
+                        for x in ((ZMK_MAKE, iData, lOptionsSource)):
+                            lTemplate += x.get("flag", {}).get(lType, [])
                 lTemplate += [f"-I{x}" for x in iData.get("include", [])]
                 lTemplate += ["-c", lPathSource, "-o", f"{lPathSource}.o"]
                 lTarget.append(lTemplate)
         elif lContext == "link":
             lTemplate  = ZMK_APP["linker"][iData["link"]["handle"][0]]["command"] + [(x + ".o") for x in iData.get("sources", {}).keys()] + ["-o", iData["target"]]
-            lTemplate += iData.get("flag", {}).get("shared", ZMK_MAKE["flag"]["shared"])
-            lTemplate += iData.get("flag", {}).get("linker", ZMK_MAKE["flag"]["linker"])
-            for x in ((iData, ZMK_MAKE)):
-                lTemplate += x.get("flag", {}).get("extra", {}).get("shared", [])
-                lTemplate += x.get("flag", {}).get("extra", {}).get("linker", [])
+            for lType in (("shared", "linker")):
+                lForce = iData.get("flag:force", {}).get(lType, ZMK_MAKE.get("flag:force", {}).get(lType, []))
+                if lForce:
+                    lTemplate += lForce
+                else:
+                    for x in ((iData, ZMK_MAKE)):
+                        lTemplate += x.get("flag", {}).get(lType, [])
             lTemplate += [f"-L{x}" for x in iData.get("include", [])]
             lTemplate += [f"-l{x}" for x in iData.get("link", {}).get("lib", [])]
             lTarget.append(lTemplate)
@@ -279,7 +284,7 @@ def ZMK_Main(iArgs):
         ZMK_MakeCommand(lMake, ["compile", "link", "clean", "finish"])
         for lType, lList in lMake.get("commands", {}).items():
             for lCommand in lList:
-                ZMK_UtilMessage(ZMK_UtilCommandPrint(lCommand), f"cmd[{lType}]")
+                ZMK_UtilMessage(ZMK_UtilCommandPrint(lCommand), f"{ZMK_COLOR['BL']}cmd{ZMK_COLOR['NN']}-{ZMK_COLOR['YE']}{lType}{ZMK_COLOR['NN']}")
                 if not ZMK_APP["set"]["dry"]:
                     lHalt = ZMK_UtilCommandExec(lCommand, False).returncode
                     if lHalt != 0x0:
