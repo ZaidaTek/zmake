@@ -40,7 +40,7 @@ ZMK_CONST = {
         ["sha256sum"]
     ]
 }
-ZMK_COLOR = {"PL": "\033[95m", "BL": "\033[94m", "CY": "\033[96m", "GN": "\033[92m", "YE": "\033[93m", "RD": "\033[91m", "NN": "\033[0m", "BD": "\033[1m", "UN": "\033[4m"}
+ZMK_COLOR = {"NN": "\033[0m", "BD": "\033[1m", "UN": "\033[4m", "RD": "\033[91m", "GN": "\033[92m", "YE": "\033[93m", "BL": "\033[94m", "UV": "\033[95m", "CY": "\033[96m"}
 ## APPLICATION SETTINGS, TODO zmake.jsonf
 ZMK_APP = {
     "cache": {
@@ -73,13 +73,8 @@ ZMK_APP = {
 ZMK_MAKE = {
     "flag": {
         "shared": ["-O3", "-flto"],
-        "compiler": [],
-        "linker": ["-s"],
-        "extra": {
-            "shared": [],
-            "compiler": ["-Wfatal-errors", "-Werror", "-Wall", "-Wextra"],
-            "linker": []
-        }
+        "compiler": ["-Wfatal-errors", "-Werror", "-Wall", "-Wextra"],
+        "linker": ["-s"]
     }
 }
 ## UTIL FUNCTIONS
@@ -93,9 +88,9 @@ def ZMK_UtilMessage(iMessage = "message", iContext = f"{ZMK_COLOR['BL']}msg{ZMK_
     if iOutput:
         print(iOutput, file=sys.stdout)
 def ZMK_UtilWarn(iMessage = "unknown warning"):
-    ZMK_UtilMessage(iMessage, f"{ZMK_COLOR['YE']}wrn{ZMK_COLOR['NN']}")
+    ZMK_UtilMessage(iMessage, f"{ZMK_COLOR['YE'] + ZMK_COLOR['BD']}warning{ZMK_COLOR['NN'] + ZMK_COLOR['NN']}")
 def ZMK_UtilError(iMessage = "unknown error", iCode = 0x1):
-    ZMK_UtilMessage(iMessage, f"{ZMK_COLOR['RD']}err{ZMK_COLOR['NN']}")
+    ZMK_UtilMessage(iMessage, f"{ZMK_COLOR['RD'] + ZMK_COLOR['BD']}error{ZMK_COLOR['NN'] + ZMK_COLOR['NN']}")
     exit(iCode)
 def ZMK_UtilOption(iArgs, iList = [], ioUser = {}):
     ioUser["__PATH__"] = iArgs[0]
@@ -304,9 +299,6 @@ def ZMK_Main(iArgs):
 if __name__ == "__main__":
     exit(ZMK_Main(sys.argv))
 
-## TODO
-## 25258 fflag == .zmk project forced flag, else ["flag"] == current ["extra"] compound add by default
-##       NOTE requires either code to interpret older .zmk or convert all .zmk to conform
 ## 'UNDER CONSTRUCTION'
 #["gcc", "|%FLAGS%", "|-I|%INCLUDES%", "|-c|%SOURCE%", "|-o|%SOURCE%.o"]
 #["gcc", "|%SOURCES%.o", "|-o|%TARGET%", "|%FLAGS%", "|-L|%INCLUDES%","|-l|%LINKS%"]
